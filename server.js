@@ -11,7 +11,8 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(cors());
+app.use(cors({ origin: '*' }));
+
 app.use(express.json());
 
 let items = Array.from({ length: 1000000 }, (_, i) => ({
