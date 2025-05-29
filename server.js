@@ -6,7 +6,7 @@ const port = process.env.PORT || 3001;
 // Improved CORS setup
 app.use(
     cors({
-        origin: 'https://drop-task.vercel.app/',
+        origin: 'https://drop-task.vercel.app',
         methods: ['GET', 'POST', 'OPTIONS'],
         allowedHeaders: ['Content-Type'],
     })
