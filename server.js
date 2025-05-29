@@ -3,140 +3,191 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Middleware для логирования
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    if (req.body) console.log('Body:', req.body);
-    if (req.query) console.log('Query:', req.query);
-    next();
-});
-
-app.use(cors({ origin: '*' }));
+// Improved CORS setup
+app.use(
+    cors({
+        origin: 'https://drop-task.vercel.app/',
+        methods: ['GET', 'POST', 'OPTIONS'],
+        allowedHeaders: ['Content-Type'],
+    })
+);
 
 app.use(express.json());
 
-let items = Array.from({ length: 1000000 }, (_, i) => ({
-    id: i + 1,
-    text: `Item ${i + 1}`,
-    selected: false,
-}));
-
-let state = {
-    order: null,
-    selected: [],
+// In-memory storage for application state
+const state = {
+    // Stores custom order of IDs (null means original order)
+    customOrder: null,
+    // Stores selected item IDs
+    selectedItems: new Set(),
+    // Cache for search results { searchTerm: { ids: [], total: number }}
+    searchCache: new Map(),
 };
 
-// Получение текущего состояния
-app.get('/api/state', (req, res) => {
+// Generate item data on demand
+const generateItem = (id) => ({
+    id,
+    text: `Item ${id}`,
+    selected: state.selectedItems.has(id),
+});
+
+// Apply custom ordering to IDs
+const applyCustomOrder = (ids) => {
+    if (!state.customOrder) return ids;
+
+    const orderedIds = [];
+    const remainingIds = new Set(ids);
+
+    // 1. Add items from custom order first
+    for (const id of state.customOrder) {
+        if (remainingIds.has(id)) {
+            orderedIds.push(id);
+            remainingIds.delete(id);
+        }
+    }
+
+    // 2. Add remaining items in original order
+    for (const id of ids) {
+        if (remainingIds.has(id)) {
+            orderedIds.push(id);
+        }
+    }
+
+    return orderedIds;
+};
+
+// API Endpoints
+
+// Get paginated items with search and sorting
+app.get('/api/items', (req, res) => {
     try {
-        console.log('Fetching current state');
+        const { page = 1, limit = 20, search = '' } = req.query;
+        const pageNum = Math.max(1, parseInt(page));
+        const limitNum = Math.max(1, Math.min(100, parseInt(limit)));
+        const searchTerm = search.toLowerCase().trim();
+
+        let itemIds = [];
+        let total = 1000000;
+
+        if (searchTerm) {
+            // Логика поиска (предполагаю, что вы её уже исправили)
+            if (state.searchCache.has(searchTerm)) {
+                const cache = state.searchCache.get(searchTerm);
+                itemIds = cache.ids;
+                total = cache.total;
+            } else {
+                const matchIds = [];
+                for (let id = 1; id <= 1000000; id++) {
+                    if (`Item ${id}`.toLowerCase().includes(searchTerm)) {
+                        matchIds.push(id);
+                    }
+                    if (matchIds.length >= 1000) break; // Ограничение для демо
+                }
+                itemIds = matchIds;
+                total = matchIds.length;
+                state.searchCache.set(searchTerm, { ids: itemIds, total });
+            }
+        } else if (state.customOrder) {
+            // Если есть customOrder, используем его для первых элементов
+            itemIds = state.customOrder.slice(0, 1000000); // Ограничение до всех элементов
+            total = 1000000;
+        } else {
+            // Без поиска и customOrder — все элементы
+            itemIds = Array.from({ length: 1000000 }, (_, i) => i + 1);
+            total = 1000000;
+        }
+
+        // Пагинация
+        const startIndex = (pageNum - 1) * limitNum;
+        const endIndex = startIndex + limitNum;
+        const resultIds = itemIds.slice(startIndex, endIndex);
+
+        // Генерация элементов
+        const items = resultIds.map(generateItem);
+
         res.json({
-            order: state.order,
-            selected: state.selected,
+            items,
+            total,
+            hasMore: endIndex < total,
+            page: pageNum,
+            limit: items.length,
         });
     } catch (error) {
-        console.error('Error in /api/state:', error);
+        console.error('Error in /api/items:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
-
-// Обновление порядка элементов
+// Save custom item order
 app.post('/api/update-order', (req, res) => {
     try {
-        state.order = req.body.order;
-        console.log('Order updated:', state.order);
-        res.json({ success: true });
+        const { order } = req.body;
+
+        if (!Array.isArray(order)) {
+            return res.status(400).json({ error: 'Order must be an array' });
+        }
+
+        // Validate all IDs are unique and within range
+        const idSet = new Set();
+        for (const id of order) {
+            if (typeof id !== 'number' || id < 1 || id > 1000000) {
+                return res.status(400).json({ error: `Invalid ID: ${id}` });
+            }
+            if (idSet.has(id)) {
+                return res.status(400).json({ error: `Duplicate ID: ${id}` });
+            }
+            idSet.add(id);
+        }
+
+        state.customOrder = order;
+        state.searchCache.clear(); // Invalidate search cache
+
+        res.json({
+            success: true,
+            message: `Order updated with ${order.length} items`,
+        });
     } catch (error) {
         console.error('Error updating order:', error);
         res.status(500).json({ error: 'Failed to update order' });
     }
 });
 
-// Обновление выбранных элементов
+// Update item selection
 app.post('/api/update-selection', (req, res) => {
     try {
         const { id, selected } = req.body;
 
-        if (selected) {
-            if (!state.selected.includes(id)) {
-                state.selected.push(id);
-            }
-        } else {
-            state.selected = state.selected.filter((itemId) => itemId !== id);
+        if (typeof id !== 'number' || id < 1 || id > 1000000) {
+            return res.status(400).json({ error: 'Invalid item ID' });
         }
 
-        console.log('Selection updated:', state.selected);
-        res.json({ success: true });
+        if (selected) {
+            state.selectedItems.add(id);
+        } else {
+            state.selectedItems.delete(id);
+        }
+
+        res.json({
+            success: true,
+            selected: selected,
+            selectedCount: state.selectedItems.size,
+        });
     } catch (error) {
         console.error('Error updating selection:', error);
         res.status(500).json({ error: 'Failed to update selection' });
     }
 });
 
-// Получение элементов с пагинацией и поиском
-app.get('/api/items', async (req, res) => {
-    try {
-        const { page = 1, limit = 20, search = '' } = req.query;
-        console.log(
-            `Fetching items: page=${page}, limit=${limit}, search="${search}"`
-        );
-
-        let filteredItems = [...items];
-
-        if (search) {
-            filteredItems = filteredItems.filter((item) =>
-                item.text.toLowerCase().includes(search.toLowerCase())
-            );
-        }
-
-        if (state.order) {
-            filteredItems.sort((a, b) => {
-                const aIndex = state.order.indexOf(a.id);
-                const bIndex = state.order.indexOf(b.id);
-
-                if (aIndex === -1 && bIndex === -1) return 0;
-                if (aIndex === -1) return 1;
-                if (bIndex === -1) return -1;
-
-                return aIndex - bIndex;
-            });
-        }
-
-        const startIndex = (page - 1) * limit;
-        const endIndex = startIndex + limit;
-
-        filteredItems = filteredItems.map((item) => ({
-            ...item,
-            selected: state.selected.includes(item.id),
-        }));
-
-        console.log(
-            `Returning items ${startIndex}-${endIndex} of ${filteredItems.length}`
-        );
-
-        res.json({
-            items: filteredItems.slice(startIndex, endIndex),
-            total: filteredItems.length,
-            hasMore: endIndex < filteredItems.length,
-        });
-    } catch (error) {
-        console.error('Error in /api/items:', error);
-        res.status(500).json({ error: 'Failed to fetch items' });
-    }
+// Get current application state
+app.get('/api/state', (req, res) => {
+    res.json({
+        selected: Array.from(state.selectedItems),
+        selectedCount: state.selectedItems.size,
+        hasCustomOrder: !!state.customOrder,
+    });
 });
 
-// Обработчик 404
-app.use((req, res) => {
-    console.warn(`Route not found: ${req.method} ${req.url}`);
-    res.status(404).json({ error: 'Not found' });
-});
-
-// Обработчик ошибок сервера
-app.use((error, req, res, next) => {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-});
-
+// Start server
 app.listen(port, () => {
     console.log(`Server running on http://localhost:${port}`);
+    console.log('Initialized with 1,000,000 items');
 });
