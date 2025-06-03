@@ -70,41 +70,48 @@ app.get('/api/items', (req, res) => {
         let total = 1000000;
 
         if (searchTerm) {
-            // Логика поиска (предполагаю, что вы её уже исправили)
             if (state.searchCache.has(searchTerm)) {
                 const cache = state.searchCache.get(searchTerm);
                 itemIds = cache.ids;
                 total = cache.total;
             } else {
                 const matchIds = [];
-                for (let id = 1; id <= 1000000; id++) {
-                    if (`Item ${id}`.toLowerCase().includes(searchTerm)) {
-                        matchIds.push(id);
+                // Оптимизируем поиск
+                const searchNum = parseInt(searchTerm.replace(/\D/g, '')) || 0;
+                if (searchNum) {
+                    // Ищем только ID, содержащие searchTerm
+                    for (let id = 1; id <= 1000000; id++) {
+                        if (`${id}`.includes(searchTerm)) {
+                            matchIds.push(id);
+                        }
+                        if (matchIds.length >= 1000) break; // Ограничение для производительности
                     }
-                    if (matchIds.length >= 1000) break; // Ограничение для демо
                 }
                 itemIds = matchIds;
-                total = state.customOrder.length;
+                total = matchIds.length;
                 state.searchCache.set(searchTerm, { ids: itemIds, total });
             }
-        } else if (state.customOrder) {
-            // Если есть customOrder, используем его для первых элементов
-            itemIds = state.customOrder.slice(0, 1000000); // Ограничение до всех элементов
-            total = 1000000;
+        } else if (state.customOrder && state.customOrder.length > 0) {
+            itemIds = state.customOrder;
+            total = state.customOrder.length;
         } else {
-            // Без поиска и customOrder — все элементы
             itemIds = Array.from({ length: 1000000 }, (_, i) => i + 1);
             total = 1000000;
         }
 
-        // Пагинация
         const startIndex = (pageNum - 1) * limitNum;
         const endIndex = startIndex + limitNum;
         const resultIds = itemIds.slice(startIndex, endIndex);
 
-        // Генерация элементов
         const items = resultIds.map(generateItem);
 
+        console.log('API /items:', {
+            pageNum,
+            limitNum,
+            total,
+            hasMore: endIndex < total,
+            items: resultIds.length,
+        });
         res.json({
             items,
             total,
