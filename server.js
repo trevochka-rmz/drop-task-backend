@@ -84,7 +84,7 @@ app.get('/api/items', (req, res) => {
                     if (matchIds.length >= 1000) break; // Ограничение для демо
                 }
                 itemIds = matchIds;
-                total = matchIds.length;
+                total = state.customOrder.length;
                 state.searchCache.set(searchTerm, { ids: itemIds, total });
             }
         } else if (state.customOrder) {
