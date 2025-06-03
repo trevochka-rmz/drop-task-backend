@@ -71,27 +71,28 @@ app.get('/api/items', (req, res) => {
 
         if (searchTerm) {
             if (state.searchCache.has(searchTerm)) {
+                console.log(`Cache hit for search: ${searchTerm}`);
                 const cache = state.searchCache.get(searchTerm);
                 itemIds = cache.ids;
                 total = cache.total;
             } else {
+                console.log(`Computing search for: ${searchTerm}`);
                 const matchIds = [];
-                // Оптимизируем поиск
-                const searchNum = parseInt(searchTerm.replace(/\D/g, '')) || 0;
-                if (searchNum) {
-                    // Ищем только ID, содержащие searchTerm
-                    for (let id = 1; id <= 1000000; id++) {
-                        if (`${id}`.includes(searchTerm)) {
-                            matchIds.push(id);
-                        }
-                        if (matchIds.length >= 1000) break; // Ограничение для производительности
+                for (let id = 1; id <= 1000000; id++) {
+                    if (`${id}`.includes(searchTerm)) {
+                        matchIds.push(id);
                     }
+                    if (matchIds.length >= 1000) break;
                 }
                 itemIds = matchIds;
                 total = matchIds.length;
                 state.searchCache.set(searchTerm, { ids: itemIds, total });
             }
-        } else if (state.customOrder && state.customOrder.length > 0) {
+        } else if (
+            state.customOrder &&
+            Array.isArray(state.customOrder) &&
+            state.customOrder.length > 0
+        ) {
             itemIds = state.customOrder;
             total = state.customOrder.length;
         } else {
@@ -120,8 +121,11 @@ app.get('/api/items', (req, res) => {
             limit: items.length,
         });
     } catch (error) {
-        console.error('Error in /api/items:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        console.error('Error in /api/items:', error.stack);
+        res.status(500).json({
+            error: 'Internal server error',
+            message: error.message,
+        });
     }
 });
 // Save custom item order
